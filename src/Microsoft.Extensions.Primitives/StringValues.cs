@@ -4,6 +4,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Internal;
 
 namespace Microsoft.Extensions.Primitives
@@ -16,19 +17,16 @@ namespace Microsoft.Extensions.Primitives
         private static readonly string[] EmptyArray = new string[0];
         public static readonly StringValues Empty = new StringValues(EmptyArray);
 
-        private readonly string _value;
-        private readonly string[] _values;
+        private readonly object _value;
 
         public StringValues(string value)
         {
             _value = value;
-            _values = null;
         }
 
         public StringValues(string[] values)
         {
-            _value = null;
-            _values = values;
+            _value = values;
         }
 
         public static implicit operator StringValues(string value)
@@ -51,8 +49,11 @@ namespace Microsoft.Extensions.Primitives
             return value.GetArrayValue();
         }
 
-        public int Count => _value != null ? 1 : (_values?.Length ?? 0);
+        public int Count => (_value is string) ? 1 : GetArrayCount();
 
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private int GetArrayCount() => ((_value as string[])?.Length ?? 0);
+        
         bool ICollection<string>.IsReadOnly
         {
             get { return true; }
@@ -68,16 +69,29 @@ namespace Microsoft.Extensions.Primitives
         {
             get
             {
-                if (_values != null)
+                if (index == 0)
                 {
-                    return _values[index]; // may throw
+                    var stringVal = _value as string;
+                    if (stringVal != null)
+                    {
+                        return stringVal;
+                    }
                 }
-                if (index == 0 && _value != null)
-                {
-                    return _value;
-                }
-                return EmptyArray[0]; // throws
+                
+                return GetArrayItem(index);
             }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private string GetArrayItem(int index)
+        {
+            var arrayValue = _value as string[];
+            if (arrayValue != null)
+            {
+                return arrayValue[index]; // may throw
+            }
+            
+            return EmptyArray[0]; // throws
         }
 
         public override string ToString()
@@ -87,18 +101,31 @@ namespace Microsoft.Extensions.Primitives
 
         private string GetStringValue()
         {
-            if (_values == null)
+            var stringVal = _value as string;
+            if (stringVal != null)
             {
-                return _value;
+                return stringVal;
             }
-            switch (_values.Length)
-            {
-                case 0: return null;
-                case 1: return _values[0];
-                default: return string.Join(",", _values);
-            }
+            
+            return GetArrayStringValue();
         }
 
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private string GetArrayStringValue()
+        {
+            var arrayValue = _value as string[];
+            if (arrayValue != null)
+            {
+                switch (arrayValue.Length)
+                {
+                    case 0: return null;
+                    case 1: return arrayValue[0];
+                    default: return string.Join(",", arrayValue);
+                }
+            }
+            return null;
+        }
+        
         public string[] ToArray()
         {
             return GetArrayValue() ?? EmptyArray;
@@ -106,11 +133,24 @@ namespace Microsoft.Extensions.Primitives
 
         private string[] GetArrayValue()
         {
-            if (_value != null)
+            var arrayValue = _value as string[];
+            if (arrayValue != null)
             {
-                return new[] { _value };
+                return arrayValue;
             }
-            return _values;
+            
+            return GetStringArrayValue();
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private string[] GetStringArrayValue()
+        {
+            var stringVal = _value as string;
+            if (stringVal != null)
+            {
+                return new[] { stringVal };
+            }
+            return null;
         }
 
         int IList<string>.IndexOf(string item)
@@ -120,12 +160,12 @@ namespace Microsoft.Extensions.Primitives
 
         private int IndexOf(string item)
         {
-            if (_values != null)
+            var arrayValue = _value as string[];
+            if (arrayValue != null)
             {
-                var values = _values;
-                for (int i = 0; i < values.Length; i++)
+                for (int i = 0; i < arrayValue.Length; i++)
                 {
-                    if (string.Equals(values[i], item, StringComparison.Ordinal))
+                    if (string.Equals(arrayValue[i], item, StringComparison.Ordinal))
                     {
                         return i;
                     }
@@ -133,9 +173,16 @@ namespace Microsoft.Extensions.Primitives
                 return -1;
             }
 
-            if (_value != null)
+            return IndexOfString(item);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private int IndexOfString(string item)
+        {
+            var stringVal = _value as string;
+            if (stringVal != null)
             {
-                return string.Equals(_value, item, StringComparison.Ordinal) ? 0 : -1;
+                return string.Equals(stringVal, item, StringComparison.Ordinal) ? 0 : -1;
             }
 
             return -1;
@@ -153,13 +200,15 @@ namespace Microsoft.Extensions.Primitives
 
         private void CopyTo(string[] array, int arrayIndex)
         {
-            if (_values != null)
+            var arrayValue = _value as string[];
+            if (arrayValue != null)
             {
-                Array.Copy(_values, 0, array, arrayIndex, _values.Length);
+                Array.Copy(arrayValue, 0, array, arrayIndex, arrayValue.Length);
                 return;
             }
 
-            if (_value != null)
+            var stringVal = _value as string;
+            if (stringVal != null)
             {
                 if (array == null)
                 {
@@ -175,7 +224,7 @@ namespace Microsoft.Extensions.Primitives
                         $"'{nameof(array)}' is not long enough to copy all the items in the collection. Check '{nameof(arrayIndex)}' and '{nameof(array)}' length.");
                 }
 
-                array[arrayIndex] = _value;
+                array[arrayIndex] = stringVal;
             }
         }
 
@@ -221,18 +270,27 @@ namespace Microsoft.Extensions.Primitives
 
         public static bool IsNullOrEmpty(StringValues value)
         {
-            if (value._values == null)
+            var stringVal = value._value as string;
+            if (stringVal != null)
             {
-                return string.IsNullOrEmpty(value._value);
+                return string.IsNullOrEmpty(stringVal);
             }
-            switch (value._values.Length)
+            
+            return value.IsNullOrEmptyArray();
+        }
+        
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool IsNullOrEmptyArray()
+        {
+            var arrayValue = _value as string[];
+            switch (arrayValue.Length)
             {
                 case 0: return true;
-                case 1: return string.IsNullOrEmpty(value._values[0]);
+                case 1: return string.IsNullOrEmpty(arrayValue[0]);
                 default: return false;
             }
         }
-
+        
         public static StringValues Concat(StringValues values1, StringValues values2)
         {
             var count1 = values1.Count;
@@ -405,17 +463,24 @@ namespace Microsoft.Extensions.Primitives
 
         public override int GetHashCode()
         {
-            if (_values == null)
+            var stringVal = _value as string;
+            if (stringVal != null)
             {
-                return _value == null ? 0 : _value.GetHashCode();
+                return stringVal.GetHashCode();
             }
 
-            var hcc = new HashCodeCombiner();
-            for (var i = 0; i < _values.Length; i++)
+            var arrayValue = _value as string[];
+            if (arrayValue != null)
             {
-                hcc.Add(_values[i]);
+                var hcc = new HashCodeCombiner();
+                for (var i = 0; i < arrayValue.Length; i++)
+                {
+                    hcc.Add(arrayValue[i]);
+                }
+                return hcc.CombinedHash;
             }
-            return hcc.CombinedHash;
+
+            return 0;
         }
 
         public struct Enumerator : IEnumerator<string>
@@ -426,8 +491,8 @@ namespace Microsoft.Extensions.Primitives
 
             public Enumerator(ref StringValues values)
             {
-                _values = values._values;
-                _current = values._value;
+                _current = values._value as string;
+                _values = values._value as string[];
                 _index = 0;
             }
 
